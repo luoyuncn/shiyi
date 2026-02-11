@@ -14,9 +14,11 @@ from tools.registry import ToolRegistry
 class Orchestrator:
     """Main orchestrator"""
 
-    def __init__(self, config: Settings):
+    def __init__(self, config: Settings, tui_mode: bool = False, debug_mode: bool = False):
         self.config = config
         self.running = False
+        self.tui_mode = tui_mode
+        self.debug_mode = debug_mode
 
         # Initialize core components
         self.session_manager = SessionManager(config.memory)
@@ -29,8 +31,8 @@ class Orchestrator:
         if config.channels.get("voice", {}).get("enabled", False):
             self.channels.append(VoiceChannel(config))
 
-        # CLI channel
-        if config.channels.get("cli", {}).get("enabled", True):
+        # CLI channel (skip if TUI mode — TUI is launched separately by main.py)
+        if not tui_mode and config.channels.get("cli", {}).get("enabled", True):
             self.channels.append(
                 TextCLIChannel(config, self.session_manager, self.agent_core)
             )
@@ -40,6 +42,10 @@ class Orchestrator:
             self.channels.append(
                 TextAPIChannel(config, self.session_manager, self.agent_core)
             )
+
+    async def initialize_core(self):
+        """Initialize core components (public, for TUI mode pre-init)"""
+        await self._initialize_core()
 
     async def start(self):
         """Start all components"""

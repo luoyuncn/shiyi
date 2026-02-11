@@ -12,7 +12,8 @@ Shiyi 是一个私人定制的中文智能助手，支持**语音**、**CLI**、
 
 | 通道 | 说明 | 配置开关 |
 |------|------|---------|
-| CLI | 终端文字交互，支持多会话管理 | `channels.cli.enabled: true` |
+| TUI | 基于 Textual 的终端界面，Markdown 渲染、工具调用折叠块、Token 统计 | `channels.cli.enabled: true` |
+| CLI | 原始终端文字交互（`--no-tui` 回退） | `channels.cli.enabled: true` |
 | API | FastAPI HTTP 服务，JSONL 流式响应 | `channels.api.enabled: true` |
 | 语音 | 唤醒词 → VAD 录音 → STT → LLM → TTS | `channels.voice.enabled: true` |
 
@@ -91,14 +92,13 @@ TENCENT_SECRET_KEY=your_secret_key
 ### 启动
 
 ```bash
-# 方式一：直接运行（推荐）
-shiyi
-
-# 方式二：python 入口
-python main.py
+shiyi              # 启动 TUI 界面（默认）
+shiyi --debug      # TUI + 底部实时日志面板
+shiyi --no-tui     # 回退到原始 CLI 模式
+python main.py     # 等同于 shiyi
 ```
 
-默认启动 CLI 通道。如需同时开启 API 或语音通道，编辑 `config/config.yaml`：
+默认启动 TUI 通道。如需同时开启 API 或语音通道，编辑 `config/config.yaml`：
 
 ```yaml
 channels:
@@ -114,22 +114,37 @@ channels:
 
 ## 使用说明
 
-### CLI 通道
+### TUI 界面
 
 ```
-👤 你: 你好
-
-👤 你: 帮我搜索 Python asyncio 最佳实践
-[调用工具: search_web]
-[工具返回]
-这里是搜索结果的总结...
-
-👤 你: /new          # 创建新会话
-👤 你: /list         # 列出所有会话
-👤 你: /switch <id>  # 切换会话
-👤 你: /help         # 帮助
-Ctrl+C               # 退出
+┌─────────────────────────────────────────────┐
+│  ✦ ShiYi            DeepSeek-V3 │ a1b2c3 │ ●│  Header
+├─────────────────────────────────────────────┤
+│  👤 你                                      │
+│  帮我搜索一下今天的天气                        │
+│                                             │
+│  ⚡ search_web("今天北京天气")        [折叠]   │
+│                                             │
+│  ✦ 十一                                     │
+│  今天北京天气晴，气温 **25°C**...             │
+├─────────────────────────────────────────────┤
+│ Tokens: 1.2k/128k ████░░░░ 0.9% │ 消息: 3  │  Footer
+├─────────────────────────────────────────────┤
+│ > 输入消息... (/help 查看命令)                │
+└─────────────────────────────────────────────┘
 ```
+
+**斜杠命令：**
+
+| 命令 | 功能 |
+|------|------|
+| `/new` | 创建新会话 |
+| `/list` | 列出所有会话 |
+| `/switch <id>` | 切换到指定会话 |
+| `/clear` | 清屏 |
+| `/help` | 显示帮助 |
+
+**快捷键：** `Ctrl+C` 中断/退出 · `Ctrl+D` 退出 · `Ctrl+L` 清屏
 
 ### API 通道
 
@@ -271,6 +286,7 @@ memory:
 | Web 框架 | FastAPI + JSONL 流式响应 |
 | 数据库 | SQLite + SQLAlchemy async |
 | 缓存 | LRU 内存缓存 |
+| TUI | Textual + Rich（终端界面）|
 | 搜索 | DuckDuckGo（ddgs，无需 API Key）|
 | MCP | httpx 异步 HTTP 客户端 |
 | 唤醒词 | openWakeWord（本地，可选）|

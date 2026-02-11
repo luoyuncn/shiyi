@@ -1,0 +1,162 @@
+/* ShiYi TUI Theme — Gemini Style */
+
+Screen {
+    background: #131314;  /* Gemini Dark Background */
+    color: #E3E3E3;
+}
+
+/* ── Header ─────────────────────────────────── */
+HeaderBar {
+    height: 3;
+    background: #131314;
+    color: #E3E3E3;
+    padding: 1 2;
+    dock: top;
+}
+
+/* ── Chat Area ──────────────────────────────── */
+ChatView {
+    height: 1fr;
+    padding: 1 4;  /* More padding for readability */
+    background: #131314;
+    scrollbar-size: 1 1;
+}
+
+/* Message spacing */
+UserMessage {
+    margin: 2 0 1 0;
+    padding: 1 2;
+    background: #1E1F20;  /* Darker surface for user */
+    border-radius: 10px;
+    color: #E3E3E3;
+    max-width: 80%;
+}
+
+AssistantMessage {
+    margin: 1 0 2 0;
+    padding: 0 1;
+    background: #131314;
+    color: #E3E3E3;
+}
+
+/* User label */
+UserMessage > .message-label {
+    color: #A8C7FA; /* Gemini Blue */
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+/* Assistant label */
+AssistantMessage > .message-label {
+    color: #E8EAED;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+/* Markdown content */
+AssistantMessage > Markdown {
+    background: transparent;
+    color: #E3E3E3;
+}
+
+UserMessage > Markdown {
+    background: transparent;
+    color: #E3E3E3;
+}
+
+/* System notice */
+SystemNotice {
+    margin: 1 0;
+    padding: 0 1;
+    color: #9AA0A6;
+    text-style: italic;
+    text-align: center;
+}
+
+/* Error notice */
+ErrorNotice {
+    margin: 1 0;
+    padding: 1 2;
+    background: #3c1e1e;
+    color: #ffb4ab;
+    border-left: solid #ffb4ab;
+}
+
+/* ── Tool Call Block ────────────────────────── */
+ToolCallBlock {
+    margin: 1 0 1 2;
+    padding: 1;
+    background: #1E1F20;
+    border-left: solid #A8C7FA;
+    height: auto;
+}
+
+ToolCallBlock > CollapsibleTitle {
+    color: #A8C7FA;
+    background: #1E1F20;
+}
+
+ToolCallBlock > Contents {
+    padding: 0 1;
+    color: #C4C7C5;
+}
+
+/* ── Status Bar ─────────────────────────────── */
+StatusBar {
+    height: 1;
+    background: #1E1F20;
+    color: #9AA0A6;
+    padding: 0 2;
+    dock: bottom;
+}
+
+/* ── Log Panel ──────────────────────────────── */
+LogPanel {
+    height: 10;
+    border-top: solid #444746;
+    background: #0b0b0b;
+    padding: 0 1;
+    dock: bottom;
+}
+
+LogPanel > .log-title {
+    height: 1;
+    background: #1E1F20;
+    color: #9AA0A6;
+    padding: 0 1;
+}
+
+LogPanel > RichLog {
+    background: #0b0b0b;
+    color: #c0c0c0;
+}
+
+/* ── Input Area ─────────────────────────────── */
+Input {
+    dock: bottom;
+    margin: 1 4;
+    padding: 1 2;
+    height: auto;
+    min-height: 3;
+    background: #1E1F20;
+    border: none;
+    color: #E3E3E3;
+}
+
+Input:focus {
+    background: #28292A;
+    border: none;
+    color: #FFFFFF;
+}
+
+Input > .input--placeholder {
+    color: #5E5E5E;
+}
+
+/* ── Scrollbar ──────────────────────────────── */
+Screen {
+    scrollbar-background: #131314;
+    scrollbar-color: #444746;
+    scrollbar-color-hover: #5E5E5E;
+    scrollbar-color-active: #A8C7FA;
+}

@@ -1,8 +1,7 @@
 """Agent core - LLM reasoning and tool calling"""
-import asyncio
 import json
 from datetime import datetime
-from typing import AsyncIterator, Optional, Any
+from typing import AsyncIterator, Any
 from loguru import logger
 
 from engines.llm.openai_compatible_engine import OpenAICompatibleEngine
@@ -71,31 +70,45 @@ class AgentCore:
             ]
 
             # Tool calling loop
+            total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
             iteration = 0
             while iteration < self.max_tool_iterations:
                 iteration += 1
 
-                # Call LLM with tool support
-                response = await self.llm_engine.chat_with_tools(
+                # Call LLM with tool support (streaming)
+                stream = self.llm_engine.chat_with_tools_stream(
                     full_messages,
                     tools=tools if enable_tools else None
                 )
 
-                # Handle response type
-                if response["type"] == "text":
-                    # Text response - yield and finish
-                    content = response["content"]
-                    yield {"type": "text", "content": content}
+                # Collect full response for history
+                current_content = ""
+                tool_calls = []
 
-                    # Add to messages for context
-                    full_messages.append({"role": "assistant", "content": content})
-                    break
+                async for chunk in stream:
+                    # Accumulate usage
+                    if chunk["type"] == "usage":
+                        for k in total_usage:
+                            total_usage[k] += chunk["usage"].get(k, 0)
+                        # Forward usage event immediately
+                        yield chunk
 
-                elif response["type"] == "tool_calls":
-                    # Tool calls - execute them
-                    tool_calls = response["tool_calls"]
+                    elif chunk["type"] == "text_delta":
+                        content_delta = chunk["content"]
+                        current_content += content_delta
+                        yield {"type": "text", "content": content_delta}  # Use "text" type for TUI compat, but it's a delta now
 
-                    # Add assistant message with tool calls
+                    elif chunk["type"] == "tool_calls":
+                        tool_calls = chunk["tool_calls"]
+
+                # Decide next step based on what we got
+                if tool_calls:
+                    # We have tool calls
+                    # 1. Add assistant message (if any text preceded tool calls)
+                    if current_content:
+                        full_messages.append({"role": "assistant", "content": current_content})
+
+                    # 2. Add assistant message with tool calls
                     full_messages.append({
                         "role": "assistant",
                         "content": None,
@@ -112,34 +125,28 @@ class AgentCore:
                         ]
                     })
 
-                    # Execute each tool
-                    for tool_call in tool_calls:
-                        tool_name = tool_call["name"]
-                        tool_args_str = tool_call["arguments"]
-                        tool_id = tool_call["id"]
+                    # 3. Execute tools
+                    for tc in tool_calls:
+                        tool_name = tc["name"]
+                        tool_args_str = tc["arguments"]
+                        tool_id = tc["id"]
 
                         try:
-                            # Parse arguments
                             tool_args = json.loads(tool_args_str)
-
-                            # Yield tool call event
                             yield {
                                 "type": "tool_call",
                                 "tool": tool_name,
                                 "args": tool_args
                             }
 
-                            # Execute tool
                             result = await self._execute_tool(tool_name, tool_args)
 
-                            # Yield tool result event
                             yield {
                                 "type": "tool_result",
                                 "tool": tool_name,
                                 "result": str(result)
                             }
 
-                            # Add tool result to messages
                             full_messages.append({
                                 "role": "tool",
                                 "tool_call_id": tool_id,
@@ -150,13 +157,11 @@ class AgentCore:
                         except Exception as e:
                             error_msg = f"工具执行失败: {e}"
                             logger.error(f"执行工具 {tool_name} 失败: {e}")
-
                             yield {
                                 "type": "tool_result",
                                 "tool": tool_name,
                                 "result": error_msg
                             }
-
                             full_messages.append({
                                 "role": "tool",
                                 "tool_call_id": tool_id,
@@ -164,18 +169,25 @@ class AgentCore:
                                 "content": error_msg
                             })
 
-                    # Continue loop to get LLM's response with tool results
+                    # Loop continues to send tool results back to LLM...
+
+                elif current_content:
+                    # Just text, no tools. We are done.
+                    full_messages.append({"role": "assistant", "content": current_content})
+                    break # Break the loop, we are done
+
+                else:
+                    # Empty response? Should not happen usually
+                    break
 
             else:
-                # Exhausted max iterations without a text response — force a final answer
-                logger.warning(f"工具调用达到最大次数 ({self.max_tool_iterations})，强制获取最终回复")
-                full_messages.append({
-                    "role": "user",
-                    "content": "请根据以上工具查询结果，直接给出最终回答，不要再调用任何工具。"
-                })
-                final = await self.llm_engine.chat_with_tools(full_messages, tools=None)
-                if final["type"] == "text":
-                    yield {"type": "text", "content": final["content"]}
+                # Exhausted max iterations
+                logger.warning(f"工具调用达到最大次数 ({self.max_tool_iterations})")
+                yield {"type": "text", "content": "\n\n(已达到最大工具调用次数，停止执行)"}
+
+            # Yield accumulated usage if not already yielded (though we yield incrementally now)
+            # Just to be safe if total_usage is updated but not yielded
+            # (We rely on stream yielding usage events)
 
             yield {"type": "done"}
 

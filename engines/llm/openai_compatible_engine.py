@@ -145,10 +145,19 @@ class OpenAICompatibleEngine(BaseEngine):
             choice = response.choices[0]
             message = choice.message
 
+            # Extract usage data if available
+            usage = None
+            if hasattr(response, "usage") and response.usage:
+                usage = {
+                    "prompt_tokens": response.usage.prompt_tokens or 0,
+                    "completion_tokens": response.usage.completion_tokens or 0,
+                    "total_tokens": response.usage.total_tokens or 0,
+                }
+
             # 检查是否有工具调用
             if hasattr(message, 'tool_calls') and message.tool_calls:
                 logger.debug(f"🔧 LLM请求调用工具: {[tc.function.name for tc in message.tool_calls]}")
-                return {
+                result = {
                     "type": "tool_calls",
                     "tool_calls": [
                         {
@@ -157,19 +166,130 @@ class OpenAICompatibleEngine(BaseEngine):
                             "arguments": tc.function.arguments
                         }
                         for tc in message.tool_calls
-                    ]
+                    ],
                 }
             else:
                 # 普通文本响应
                 content = message.content or ""
                 logger.debug(f"🤖 LLM回复: {content}")
-                return {
+                result = {
                     "type": "text",
-                    "content": content
+                    "content": content,
                 }
+
+            if usage:
+                result["usage"] = usage
+            return result
 
         except Exception as e:
             logger.error(f"LLM生成失败: {e}")
+            raise
+
+    async def chat_with_tools_stream(
+        self,
+        messages: List[Dict[str, str]],
+        tools: List[Dict] = None
+    ) -> AsyncGenerator[Dict, None]:
+        """
+        支持工具调用的流式对话
+
+        Args:
+            messages: 消息列表
+            tools: 工具定义列表（OpenAI格式）
+
+        Yields:
+            响应字典:
+            {"type": "text_delta", "content": "..."}
+            {"type": "tool_calls", "tool_calls": [...]}
+            {"type": "usage", "usage": {...}}
+        """
+        if not self.client:
+            raise RuntimeError("LLM引擎未初始化")
+
+        try:
+            logger.debug(f"发起LLM流式请求（支持工具）: {len(messages)} 条消息")
+
+            request_params = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+                "stream": True,
+            }
+
+            if tools:
+                request_params["tools"] = tools
+                request_params["tool_choice"] = "auto"
+                # Add stream_options for usage if supported (OpenAI standard)
+                # request_params["stream_options"] = {"include_usage": True}
+
+            stream = await self.client.chat.completions.create(**request_params)
+
+            tool_calls_buffer = {}  # index -> dict
+
+            async for chunk in stream:
+                # Handle usage if present in the chunk (some providers send it in the last chunk)
+                if hasattr(chunk, "usage") and chunk.usage:
+                    yield {
+                        "type": "usage",
+                        "usage": {
+                            "prompt_tokens": chunk.usage.prompt_tokens,
+                            "completion_tokens": chunk.usage.completion_tokens,
+                            "total_tokens": chunk.usage.total_tokens,
+                        }
+                    }
+
+                if not chunk.choices:
+                    continue
+
+                delta = chunk.choices[0].delta
+
+                # 1. Text Content
+                if delta.content:
+                    yield {"type": "text_delta", "content": delta.content}
+
+                # 2. Tool Calls
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        idx = tc.index
+                        if idx not in tool_calls_buffer:
+                            tool_calls_buffer[idx] = {
+                                "id": "",
+                                "function": {"name": "", "arguments": ""}
+                            }
+
+                        entry = tool_calls_buffer[idx]
+                        if tc.id:
+                            entry["id"] += tc.id
+                        if tc.function:
+                            if tc.function.name:
+                                entry["function"]["name"] += tc.function.name
+                            if tc.function.arguments:
+                                entry["function"]["arguments"] += tc.function.arguments
+
+            # End of stream logic
+            if tool_calls_buffer:
+                # Convert buffer to list
+                tool_calls = []
+                for idx in sorted(tool_calls_buffer.keys()):
+                    entry = tool_calls_buffer[idx]
+                    tool_calls.append({
+                        "id": entry["id"],
+                        "name": entry["function"]["name"],
+                        "arguments": entry["function"]["arguments"]
+                    })
+
+                logger.debug(f"🔧 LLM流式调用工具: {[t['name'] for t in tool_calls]}")
+                yield {
+                    "type": "tool_calls",
+                    "tool_calls": tool_calls
+                }
+
+            # Note: For text responses, we've already yielded all deltas.
+            # The AgentCore will responsible for accumulating them for history.
+
+        except Exception as e:
+            logger.error(f"LLM流式生成失败: {e}")
             raise
 
     def clear_history(self):

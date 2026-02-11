@@ -1,4 +1,5 @@
 """程序主入口"""
+import argparse
 import asyncio
 import os
 import signal
@@ -95,7 +96,22 @@ from utils.logger import setup_logger
 from core.orchestrator import Orchestrator
 
 
-async def main():
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="ShiYi — 智能助手")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="启用 TUI debug 模式（底部日志面板）",
+    )
+    parser.add_argument(
+        "--no-tui",
+        action="store_true",
+        help="禁用 TUI，使用原始 CLI 模式",
+    )
+    return parser.parse_args()
+
+
+async def main(args: argparse.Namespace):
     """程序主函数"""
     # 检查.env文件
     env_file = Path(".env")
@@ -105,45 +121,67 @@ async def main():
         print("命令: cp .env.example .env")
         return
 
+    tui_mode = not args.no_tui
+    debug_mode = args.debug
+
     try:
         # 加载配置
         config = load_config()
 
         # 设置日志
-        setup_logger(config.system.log_level)
+        if tui_mode:
+            # TUI 模式：抑制 stdout 日志，仅保留文件日志
+            # debug 面板会通过自定义 sink 接收日志
+            setup_logger(config.system.log_level, suppress_stdout=True)
+        else:
+            setup_logger(config.system.log_level)
 
-        # 初始化Orchestrator
-        orchestrator = Orchestrator(config)
+        # 初始化 Orchestrator（传入 TUI 参数）
+        orchestrator = Orchestrator(config, tui_mode=tui_mode, debug_mode=debug_mode)
 
-        # 处理退出信号
-        loop = asyncio.get_running_loop()
-        stop_event = asyncio.Event()
+        if tui_mode and config.channels.get("cli", {}).get("enabled", True):
+            # TUI 模式：Textual App 接管事件循环
+            # 先初始化核心组件
+            await orchestrator.initialize_core()
 
-        def _request_stop():
-            if not stop_event.is_set():
-                stop_event.set()
+            from channels.tui.app import ShiYiApp
 
-        # Linux/macOS: use loop signal handler; Windows: fallback to signal.signal
-        for sig in (signal.SIGINT, signal.SIGTERM):
+            app = ShiYiApp(
+                config=config,
+                session_manager=orchestrator.session_manager,
+                agent_core=orchestrator.agent_core,
+                debug=debug_mode,
+            )
+
             try:
-                loop.add_signal_handler(sig, _request_stop)
-            except (NotImplementedError, OSError):
+                await app.run_async()
+            finally:
+                await orchestrator.stop()
+        else:
+            # 原始模式：Orchestrator 管理所有 channel
+            loop = asyncio.get_running_loop()
+            stop_event = asyncio.Event()
+
+            def _request_stop():
+                if not stop_event.is_set():
+                    stop_event.set()
+
+            for sig in (signal.SIGINT, signal.SIGTERM):
                 try:
-                    signal.signal(sig, lambda *_: _request_stop())
-                except (OSError, ValueError):
-                    pass
+                    loop.add_signal_handler(sig, _request_stop)
+                except (NotImplementedError, OSError):
+                    try:
+                        signal.signal(sig, lambda *_: _request_stop())
+                    except (OSError, ValueError):
+                        pass
 
-        # 启动
-        run_task = asyncio.create_task(orchestrator.start())
+            run_task = asyncio.create_task(orchestrator.start())
+            run_task.add_done_callback(lambda _: _request_stop())
 
-        # 当 run_task 结束（正常或异常）时自动触发退出
-        run_task.add_done_callback(lambda _: _request_stop())
-
-        # 等待退出信号
-        await stop_event.wait()
-        await orchestrator.stop()
-        run_task.cancel()
-        await asyncio.gather(run_task, return_exceptions=True)
+            await stop_event.wait()
+            await orchestrator.stop()
+            run_task.cancel()
+            await asyncio.gather(run_task, return_exceptions=True)
 
     except KeyboardInterrupt:
         logger.info("\n👋 接收到退出信号 (Ctrl+C)")
@@ -152,14 +190,13 @@ async def main():
         logger.exception(f"💥 程序异常退出: {e}")
 
     finally:
-        logger.info("=" * 60)
         logger.info("🏠 Shiyi已关闭，再见！")
-        logger.info("=" * 60)
 
 
 def run():
     """Entry point for `shiyi` CLI command."""
-    asyncio.run(main())
+    args = _parse_args()
+    asyncio.run(main(args))
 
 
 if __name__ == "__main__":

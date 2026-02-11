@@ -4,7 +4,17 @@
       "Bash(dir:*)",
       "Bash(python3:*)",
       "Bash(git add:*)",
-      "Bash(git commit -m \"$\\(cat <<''EOF''\nrefactor: 项目重命名为 shiyi，更新定位与文档\n\n- 全局将 ShiYiBot 重命名为 Shiyi（pyproject.toml、config、各通道、日志）\n- pyproject.toml 版本升至 2.0.0，新增 [project.scripts] shiyi 命令入口\n- main.py 新增 run\\(\\) 函数作为 `shiyi` CLI 入口点\n- README 重写：移除树莓派描述，定位为可部署于任意主机的私人助手\n- README 新增部署章节（systemd / Docker）、扩展章节和启动方式\n- CLAUDE.md 同步更新架构描述至 V2.0 多通道体系\nEOF\n\\)\")"
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nrefactor: 项目重命名为 shiyi，更新定位与文档\n\n- 全局将 ShiYiBot 重命名为 Shiyi（pyproject.toml、config、各通道、日志）\n- pyproject.toml 版本升至 2.0.0，新增 [project.scripts] shiyi 命令入口\n- main.py 新增 run\\(\\) 函数作为 `shiyi` CLI 入口点\n- README 重写：移除树莓派描述，定位为可部署于任意主机的私人助手\n- README 新增部署章节（systemd / Docker）、扩展章节和启动方式\n- CLAUDE.md 同步更新架构描述至 V2.0 多通道体系\nEOF\n\\)\")",
+      "Bash(.venv/Scripts/pip show:*)",
+      "Bash(ls:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfix: 修复多处运行时错误并优化输出体验\n\n- 修复 config.llm/tools Pydantic 对象被当 dict 访问的 TypeError\n- Settings 补充 channels/agent 字段，修复 orchestrator 启动崩溃\n- pyproject.toml 补齐缺失依赖：sqlalchemy、aiosqlite、fastapi、uvicorn\n- main.py 修复 Windows 信号处理及 run_task 异常后程序卡死问题\n- agent_core 工具循环耗尽后强制获取最终文字回复，不再无响应\n- system_prompt 注入 {model}/{datetime} 占位符，每次请求动态填充\n- 工具执行相关日志统一降为 DEBUG，消除 CLI 输出乱码\nEOF\n\\)\")",
+      "Bash(uv pip install:*)",
+      "Bash(python:*)",
+      "Bash(.venv/Scripts/python:*)",
+      "Bash(.venv/Scripts/pip install:*)",
+      "Bash(.venv/Scripts/ruff check:*)",
+      "Bash(git stash:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat: 重构 TUI 界面为 Gemini 风格并支持流式输出\n\n- 界面视觉升级：采用深色主题、高对比度配色和极简 Header\n- 核心交互优化：实现打字机流式输出，增加\"思考中\"状态\n- 架构调整：AgentCore 和 LLM 引擎支持全链路异步流式响应\n- 代码优化：移除冗余组件，改进输入框体验\nEOF\n\\)\")"
     ]
   }
 }

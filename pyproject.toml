@@ -35,6 +35,8 @@ dependencies = [
     "aiofiles>=23.2.0",
     "ddgs>=9.10.0",
     "httpx>=0.28.1",
+    # TUI
+    "textual>=0.80.0",
 ]
 
 [project.scripts]
