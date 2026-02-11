@@ -149,7 +149,7 @@ async def main():
             await assistant.cleanup()
 
         logger.info("=" * 60)
-        logger.info("🏠 小跟班已关闭，再见！")
+        logger.info("🏠 ShiYiBot已关闭，再见！")
         logger.info("=" * 60)
 
 

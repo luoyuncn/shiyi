@@ -1,4 +1,4 @@
-# 🚀 "小跟班" V1.0 详细实施计划
+# 🚀 "ShiYiBot" V1.0 详细实施计划
 
 ---
 
@@ -28,7 +28,7 @@
 #### 1.1 初始化项目
 ```bash
 # 创建项目目录
-cd tui-assistant
+cd ShiYiBot
 
 # 初始化uv项目
 uv init
@@ -48,9 +48,9 @@ touch main.py .env.example .gitignore
 #### 1.2 编写 pyproject.toml
 ```toml
 [project]
-name = "tui-assistant"
+name = "ShiYiBot"
 version = "1.0.0"
-description = "私人语音助理'小跟班'"
+description = "私人语音助理'ShiYiBot'"
 requires-python = ">=3.10"
 dependencies = [
     "pyaudio>=0.2.14",
@@ -229,7 +229,7 @@ pytest tests/test_audio.py -v
 ## 🎤 阶段2: 唤醒词 + VAD
 
 ### 目标
-实现唤醒词检测和语音活动检测，能够在说"小跟班"后自动开始录音，并在静音时停止。
+实现唤醒词检测和语音活动检测，能够在说"ShiYiBot"后自动开始录音，并在静音时停止。
 
 ### 任务清单
 
@@ -455,7 +455,7 @@ if __name__ == "__main__":
 **config/config.yaml**
 ```yaml
 system:
-  name: "小跟班"
+  name: "ShiYiBot"
   log_level: "INFO"
 
 wake_word:
@@ -482,7 +482,7 @@ llm:
   max_tokens: 500
   stream: true
   system_prompt: |
-    你是"小跟班"，腿哥的私人智能助理。
+    你是"ShiYiBot"，腿哥的私人智能助理。
     你的性格：聪明、高效、略带幽默。
     回答要求：简洁明了，口语化，每句话控制在30字以内。
 
@@ -866,7 +866,7 @@ class AssistantCore:
     async def start(self):
         """启动助理"""
         # 初始化所有引擎...
-        logger.info("小跟班已启动")
+        logger.info("ShiYiBot已启动")
 
         # 启动两个并发任务
         await asyncio.gather(
@@ -1041,7 +1041,7 @@ async def main():
 
     try:
         logger.info("=" * 50)
-        logger.info("🏠 小跟班私人助理 V1.0")
+        logger.info("🏠 ShiYiBot私人助理 V1.0")
         logger.info("=" * 50)
         await assistant.start()
 
@@ -1053,7 +1053,7 @@ async def main():
 
     finally:
         await assistant.cleanup()
-        logger.info("小跟班已关闭，再见！")
+        logger.info("ShiYiBot已关闭，再见！")
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -1063,7 +1063,7 @@ if __name__ == "__main__":
 
 **README.md**
 ```markdown
-# 🏠 小跟班 - 私人语音助理 V1.0
+# 🏠 ShiYiBot - 私人语音助理 V1.0
 
 基于树莓派4B的智能语音助手，支持唤醒词、流式对话和连续对话。
 
@@ -1077,7 +1077,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # 克隆项目
 git clone <your-repo>
-cd tui-assistant
+cd ShiYiBot
 
 # 创建虚拟环境并安装依赖
 uv venv
@@ -1147,8 +1147,8 @@ source $HOME/.cargo/env
 #### 2. 克隆并配置项目
 \`\`\`bash
 cd ~
-git clone <your-repo> tui-assistant
-cd tui-assistant
+git clone <your-repo> ShiYiBot
+cd ShiYiBot
 
 uv venv
 source .venv/bin/activate
@@ -1172,21 +1172,21 @@ aplay test.wav
 #### 4. 设置开机自启（可选）
 \`\`\`bash
 # 创建systemd服务
-sudo nano /etc/systemd/system/xiaogenban.service
+sudo nano /etc/systemd/system/ShiYiBot.service
 \`\`\`
 
 内容：
 \`\`\`ini
 [Unit]
-Description=Xiao Gen Ban Personal Assistant
+Description=ShiYiBot Personal Assistant
 After=network.target
 
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/tui-assistant
-Environment="PATH=/home/pi/tui-assistant/.venv/bin"
-ExecStart=/home/pi/tui-assistant/.venv/bin/python main.py
+WorkingDirectory=/home/pi/ShiYiBot
+Environment="PATH=/home/pi/ShiYiBot/.venv/bin"
+ExecStart=/home/pi/ShiYiBot/.venv/bin/python main.py
 Restart=on-failure
 
 [Install]
@@ -1195,9 +1195,9 @@ WantedBy=multi-user.target
 
 启动服务：
 \`\`\`bash
-sudo systemctl enable xiaogenban
-sudo systemctl start xiaogenban
-sudo systemctl status xiaogenban
+sudo systemctl enable ShiYiBot
+sudo systemctl start ShiYiBot
+sudo systemctl status ShiYiBot
 \`\`\`
 
 ---
@@ -1243,7 +1243,7 @@ sudo usermod -a -G audio $USER
 
 ## 🎯 总结
 
-本实施计划提供了从0到1构建"小跟班"私人助理的完整路径：
+本实施计划提供了从0到1构建"ShiYiBot"私人助理的完整路径：
 
 - **第1阶段**: 搭建基础框架和音频模块
 - **第2阶段**: 实现唤醒和录音功能

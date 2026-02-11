@@ -1,4 +1,4 @@
-# 🏠 小跟班 - 私人语音助理 V1.0
+# 🏠 ShiYiBot - 私人语音助理 V1.0
 
 基于树莓派4B的智能语音助手，支持本地唤醒词、流式对话和自动连续对话。
 
@@ -30,8 +30,8 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # 克隆项目
-git clone <your-repo-url> tui-assistant
-cd tui-assistant
+git clone <your-repo-url> ShiYiBot
+cd ShiYiBot
 
 # 创建虚拟环境并安装依赖
 uv venv
@@ -117,7 +117,7 @@ llm:
   model: "deepseek-chat"  # 模型名称
   temperature: 0.7  # 温度参数
   system_prompt: |  # 系统提示词
-    你是"小跟班"...
+    你是"ShiYiBot"...
 
 # TTS配置
 tts:
@@ -128,7 +128,7 @@ tts:
 ## 📂 项目结构
 
 ```
-tui-assistant/
+ShiYiBot/
 ├── config/              # 配置管理
 │   ├── config.yaml     # 主配置文件
 │   └── settings.py     # 配置加载器

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**小跟班 (TUI-Assistant)** is a Chinese-language voice assistant for Raspberry Pi 4B. It uses local wake word detection, VAD-based recording, Tencent Cloud STT, DeepSeek LLM, and Microsoft Edge TTS.
+**ShiYiBot** is a Chinese-language voice assistant for Raspberry Pi 4B. It uses local wake word detection, VAD-based recording, Tencent Cloud STT, DeepSeek LLM, and Microsoft Edge TTS.
 
 ## Commands
 
@@ -79,3 +79,4 @@ Key config sections: `system`, `wake_word`, `vad`, `stt`, `llm`, `tts`, `audio`
 ## Dependencies
 
 Managed via `uv` / `pyproject.toml`. Notable constraints: `numpy<2`, `torch==2.1.2`, `torchaudio==2.1.2` (Silero VAD compatibility).
+
