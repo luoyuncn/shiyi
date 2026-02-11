@@ -6,6 +6,8 @@ from config.settings import Settings
 from core.session_manager import SessionManager
 from core.agent_core import AgentCore
 from channels.text_cli_channel import TextCLIChannel
+from channels.text_api_channel import TextAPIChannel
+from channels.voice_channel import VoiceChannel
 from tools.registry import ToolRegistry
 
 
@@ -20,13 +22,24 @@ class Orchestrator:
         self.session_manager = SessionManager(config.memory)
         self.agent_core = AgentCore(config)
 
-        # Initialize channels
+        # Initialize channels based on config
         self.channels = []
 
-        # For now, only CLI channel
-        self.channels.append(
-            TextCLIChannel(config, self.session_manager, self.agent_core)
-        )
+        # Voice channel
+        if config.channels.get("voice", {}).get("enabled", False):
+            self.channels.append(VoiceChannel(config))
+
+        # CLI channel
+        if config.channels.get("cli", {}).get("enabled", True):
+            self.channels.append(
+                TextCLIChannel(config, self.session_manager, self.agent_core)
+            )
+
+        # API channel
+        if config.channels.get("api", {}).get("enabled", False):
+            self.channels.append(
+                TextAPIChannel(config, self.session_manager, self.agent_core)
+            )
 
     async def start(self):
         """Start all components"""
