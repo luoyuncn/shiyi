@@ -1,4 +1,30 @@
 📔 ShiYi Agent (十一) 核心设计蓝图
+
+## V2 已落地实现（2026-02-12）
+
+### 1) Frontmatter + Body 双区
+
+- `data/memory/system/ShiYi.md`、`data/memory/shared/User.md` 已升级为 Frontmatter + Markdown 正文。
+- Frontmatter 承载硬字段（如 `display_name`、`tech_stack`、`persona`），正文承载软描述与增量笔记。
+- 所有更新通过临时文件 + 替换的原子流程写入；Windows 锁文件场景下有降级兜底。
+
+### 2) Structured Patch 闸门
+
+- 会话管理器新增结构化补丁归一化与校验：`scope/fact_type/fact_key/fact_value`。
+- 非法 patch（非法 key、非法类型、超长值等）会被拒绝，不落库不落文档，并写入 `memory_events(memory_patch_rejected)`。
+- 记忆写入保持“代码层 patch”模式，避免 LLM 直接重写整份文档。
+
+### 3) 硬软分流写入策略
+
+- 用户硬字段：`display_name/role/location/preferred_tech` 等优先更新 `User.md` frontmatter。
+- 软字段：以 `- key: value` 追加或更新到正文，避免覆盖历史摘要段落。
+- `project/insight` 继续走滚动摘要与热点池代谢策略。
+
+### 4) 身份状态约束（延续）
+
+- `users.identity_confirmed` 仍是唯一真相源。
+- 未确认仅首次触发 onboarding 引导（`onboarding_prompted` 控制只提示一次）。
+
 1. 记忆系统：双轨制存储架构 (The Dual-Track Memory)
 为了平衡“全量追溯”与“精准感知”，十一采用 SQLite + Markdown 的混合记忆模式。
 

@@ -41,6 +41,21 @@ confidence 评分标准：
 如果没有值得提取的内容，返回空数组 []。
 只输出 JSON，不要输出任何其他文字。"""
 
+_ALLOWED_MEMORY_SCOPES = {"user", "project", "insight", "system"}
+_ALLOWED_FACT_TYPES = {
+    "identity",
+    "preference",
+    "habit",
+    "background",
+    "skill",
+    "project",
+    "insight",
+    "persona",
+    "constraint",
+}
+_FACT_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$")
+_MAX_FACT_VALUE_CHARS = 500
+
 
 class SessionManager:
     """Session manager - singleton."""
@@ -176,9 +191,8 @@ class SessionManager:
             # Regex fast-path (sync, instant)
             await self.summarize_and_store(content, source_message_id=message_id)
             # LLM deep extraction (async, fire-and-forget)
-            # Must only run after explicit identity confirmation.
             user_state = await self.storage.get_global_user_state()
-            if user_state["identity_confirmed"]:
+            if self._memory_updates_enabled(user_state):
                 self._fire_llm_extraction(content, source_message_id=message_id)
 
     async def _try_complete_identity_onboarding_from_message(self, content: str) -> bool:
@@ -199,6 +213,25 @@ class SessionManager:
         user_identity = fields.get("用户身份")
         confirm_value = fields.get("确认", "").lower()
         confirmed = confirm_value in {"是", "确认", "yes", "ok", "true"}
+
+        # Natural-language fallback for onboarding confirmation.
+        if not shiyi_identity:
+            shiyi_match = re.search(
+                r"(?:十一|你)(?:的)?(?:人设|定位|身份)?(?:是|为)\s*([^\n。；;]{4,120})",
+                content,
+            )
+            if shiyi_match:
+                shiyi_identity = shiyi_match.group(1).strip()
+        if not user_identity:
+            user_match = re.search(
+                r"我(?:是|叫)\s*([^\n。；;]{2,120})",
+                content,
+            )
+            if user_match:
+                user_identity = f"我是{user_match.group(1).strip()}"
+        if not confirmed and re.search(r"(确认|就按这个|没问题|可以|是的|对)", content):
+            confirmed = True
+
         if not (shiyi_identity and user_identity and confirmed):
             return False
 
@@ -243,7 +276,7 @@ class SessionManager:
         if client is None:
             return
         user_state = await self.storage.get_global_user_state()
-        if not user_state["identity_confirmed"]:
+        if not self._memory_updates_enabled(user_state):
             return
 
         # Skip very short content
@@ -274,23 +307,27 @@ class SessionManager:
             applied = 0
             pending = 0
             for item in candidates:
-                confidence = float(item.get("confidence", 0))
-                fact = {
-                    "scope": item.get("scope", "user"),
-                    "fact_type": item.get("fact_type", "preference"),
-                    "fact_key": item.get("fact_key", ""),
-                    "fact_value": item.get("fact_value", ""),
-                }
-                if not fact["fact_key"] or not fact["fact_value"]:
+                try:
+                    confidence = float(item.get("confidence", 0))
+                except (TypeError, ValueError):
+                    continue
+
+                fact, reason = self._normalize_memory_patch(item)
+                if not fact:
+                    await self._record_rejected_patch(
+                        fact=item,
+                        reason=reason or "normalize_failed",
+                        source_message_id=source_message_id,
+                    )
                     continue
 
                 if confidence >= 0.85:
-                    await self._apply_memory_fact(
+                    if await self._apply_memory_fact(
                         fact=fact,
                         confidence=confidence,
                         source_message_id=source_message_id,
-                    )
-                    applied += 1
+                    ):
+                        applied += 1
                 elif confidence >= 0.60:
                     await self.save_memory_pending(
                         candidate_fact=fact,
@@ -358,21 +395,28 @@ class SessionManager:
     async def summarize_and_store(self, content: str, source_message_id: str | None = None):
         """Incremental summarize pipeline with confidence-based routing."""
         user_state = await self.storage.get_global_user_state()
-        if not user_state["identity_confirmed"]:
+        if not self._memory_updates_enabled(user_state):
             return
 
         high_count = 0
         pending_count = 0
         for candidate in self._extract_memory_candidates(content):
             confidence = candidate["confidence"]
-            fact = candidate["fact"]
+            fact, reason = self._normalize_memory_patch(candidate["fact"])
+            if not fact:
+                await self._record_rejected_patch(
+                    fact=candidate["fact"],
+                    reason=reason or "normalize_failed",
+                    source_message_id=source_message_id,
+                )
+                continue
             if confidence >= 0.85:
-                await self._apply_memory_fact(
+                if await self._apply_memory_fact(
                     fact=fact,
                     confidence=confidence,
                     source_message_id=source_message_id,
-                )
-                high_count += 1
+                ):
+                    high_count += 1
             elif confidence >= 0.60:
                 await self.save_memory_pending(
                     candidate_fact=fact,
@@ -820,30 +864,37 @@ class SessionManager:
         delta_days = max((datetime.now() - dt).total_seconds() / 86400.0, 0.0)
         return max(0.0, 1.0 / (1.0 + delta_days / 14.0))
 
+    @staticmethod
+    def _memory_updates_enabled(user_state: dict) -> bool:
+        """Enable memory write/extraction after first onboarding touchpoint."""
+        return bool(
+            user_state.get("identity_confirmed")
+            or user_state.get("onboarding_prompted")
+        )
+
     async def prepare_messages_for_agent(self, messages: list[dict]) -> list[dict]:
         """Prepend onboarding guidance or memory card before model inference."""
         user_state = await self.storage.get_global_user_state()
-        if not user_state["identity_confirmed"]:
-            if user_state.get("onboarding_prompted"):
-                return messages
-
-            await self.storage.mark_onboarding_prompted()
-            onboarding_prompt = (
-                "系统状态：用户尚未完成身份初始化。\n"
-                "请先引导用户确认两件事：\n"
-                "1) 十一的人设定位与行为边界；\n"
-                "2) 用户身份（称呼、背景、偏好）。\n"
-                "请用户尽量按以下格式一次回复：\n"
-                "十一人设：...\n"
-                "用户身份：...\n"
-                "称呼：...\n"
-                "确认：是\n"
-                "在用户明确确认前，不要假设长期身份信息。"
-            )
-            return [{"role": "system", "content": onboarding_prompt}, *messages]
-
         memory_card = await asyncio.to_thread(self.documents.build_system_memory_card)
         system_messages = [{"role": "system", "content": memory_card}]
+
+        if not user_state["identity_confirmed"]:
+            if not user_state.get("onboarding_prompted"):
+                await self.storage.mark_onboarding_prompted()
+                onboarding_prompt = (
+                    "系统状态：用户尚未完成身份初始化。\n"
+                    "请先引导用户确认两件事：\n"
+                    "1) 十一的人设定位与行为边界；\n"
+                    "2) 用户身份（称呼、背景、偏好）。\n"
+                    "请用户尽量按以下格式一次回复：\n"
+                    "十一人设：...\n"
+                    "用户身份：...\n"
+                    "称呼：...\n"
+                    "确认：是\n"
+                    "在用户明确确认前，不要假设长期身份信息。"
+                )
+                return [{"role": "system", "content": onboarding_prompt}, *system_messages, *messages]
+            return [*system_messages, *messages]
 
         recall_prompt = await self._build_recall_prompt(messages)
         if recall_prompt:
@@ -903,23 +954,86 @@ class SessionManager:
             )
         return "\n".join(lines)
 
+    def _normalize_memory_patch(self, fact: dict) -> tuple[dict | None, str | None]:
+        """Normalize and validate one structured memory patch."""
+        if not isinstance(fact, dict):
+            return None, "fact_not_object"
+
+        scope = str(fact.get("scope", "user")).strip().lower()
+        if scope not in _ALLOWED_MEMORY_SCOPES:
+            return None, "invalid_scope"
+
+        fact_type = str(fact.get("fact_type", "preference")).strip().lower()
+        if fact_type not in _ALLOWED_FACT_TYPES:
+            return None, "invalid_fact_type"
+
+        raw_key = fact.get("fact_key")
+        fact_key = str(raw_key).strip().lower() if raw_key is not None else ""
+        if not fact_key:
+            return None, "empty_fact_key"
+        if not _FACT_KEY_PATTERN.match(fact_key):
+            return None, "invalid_fact_key"
+
+        raw_value = fact.get("fact_value")
+        if raw_value is None:
+            return None, "empty_fact_value"
+        if isinstance(raw_value, list):
+            fact_value = ", ".join(
+                [str(item).strip() for item in raw_value if str(item).strip()]
+            )
+        elif isinstance(raw_value, dict):
+            return None, "invalid_fact_value_type"
+        else:
+            fact_value = str(raw_value).strip()
+
+        if not fact_value:
+            return None, "empty_fact_value"
+        if len(fact_value) > _MAX_FACT_VALUE_CHARS:
+            return None, "fact_value_too_long"
+
+        return {
+            "scope": scope,
+            "fact_type": fact_type,
+            "fact_key": fact_key,
+            "fact_value": fact_value,
+        }, None
+
+    async def _record_rejected_patch(
+        self,
+        fact: dict,
+        reason: str,
+        source_message_id: str | None = None,
+    ):
+        await self.storage.save_memory_event(
+            event_type="memory_patch_rejected",
+            payload={
+                "reason": reason,
+                "fact": fact,
+                "fact_key": fact.get("fact_key") if isinstance(fact, dict) else None,
+                "source_message_id": source_message_id,
+            },
+        )
+
     async def _apply_memory_fact(
         self,
         fact: dict,
         confidence: float,
         source_message_id: str | None = None,
-    ):
+    ) -> bool:
         """Persist memory fact to structured DB and Markdown docs."""
-        fact_key = fact.get("fact_key")
-        fact_value = fact.get("fact_value")
-        if not fact_key or fact_value is None:
-            return
+        normalized_fact, reason = self._normalize_memory_patch(fact)
+        if not normalized_fact:
+            await self._record_rejected_patch(
+                fact=fact,
+                reason=reason or "normalize_failed",
+                source_message_id=source_message_id,
+            )
+            return False
 
-        scope = fact.get("scope", "user")
-        fact_type = fact.get("fact_type", "preference")
-        fact_value = str(fact_value).strip()
-        if not fact_value:
-            return
+        scope = normalized_fact["scope"]
+        fact_type = normalized_fact["fact_type"]
+        fact_key = normalized_fact["fact_key"]
+        fact_value = normalized_fact["fact_value"]
 
         fact_id = await self.storage.upsert_memory_fact(
             scope=scope,
@@ -963,10 +1077,14 @@ class SessionManager:
                         fact_value,
                     )
             await asyncio.to_thread(self.documents.upsert_user_fact, fact_key, fact_value)
+        elif scope == "system":
+            await asyncio.to_thread(self.documents.upsert_shiyi_fact, fact_key, fact_value)
         elif scope == "project":
             await asyncio.to_thread(self.documents.append_project_update, fact_value)
         elif scope == "insight":
             await asyncio.to_thread(self.documents.add_insight, fact_value)
+
+        return True
 
     async def _auto_flush_loop(self):
         """Auto flush loop."""

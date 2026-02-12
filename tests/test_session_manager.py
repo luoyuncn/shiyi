@@ -120,7 +120,9 @@ async def test_prepare_messages_for_agent_uses_onboarding_prompt_when_unconfirme
 
     assert prepared[0]["role"] == "system"
     assert "身份初始化" in prepared[0]["content"]
-    assert prepared[1]["role"] == "user"
+    assert prepared[1]["role"] == "system"
+    assert "记忆卡片" in prepared[1]["content"]
+    assert prepared[2]["role"] == "user"
 
     await manager.cleanup()
 
@@ -137,8 +139,10 @@ async def test_prepare_messages_for_agent_onboarding_prompt_only_once(tmp_path):
     assert "身份初始化" in prepared_first[0]["content"]
 
     prepared_second = await manager.prepare_messages_for_agent([{"role": "user", "content": "继续聊"}])
-    assert prepared_second[0]["role"] == "user"
+    assert prepared_second[0]["role"] == "system"
+    assert "记忆卡片" in prepared_second[0]["content"]
     assert all("身份初始化" not in item["content"] for item in prepared_second if item["role"] == "system")
+    assert prepared_second[1]["role"] == "user"
 
     state = await manager.get_global_user_state()
     assert state["identity_confirmed"] is False
@@ -164,7 +168,29 @@ async def test_onboarding_prompt_once_persists_across_restart(tmp_path):
     manager = SessionManager(config)
     await manager.initialize()
     second = await manager.prepare_messages_for_agent([{"role": "user", "content": "再来一次"}])
-    assert second[0]["role"] == "user"
+    assert second[0]["role"] == "system"
+    assert "记忆卡片" in second[0]["content"]
+    assert all("身份初始化" not in item["content"] for item in second if item["role"] == "system")
+    await manager.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_user_still_updates_memory_after_first_prompt(tmp_path):
+    """After first onboarding prompt, memory extraction should keep running even if unconfirmed."""
+    config = MemoryConfig(memory_root=str(tmp_path / "memory"))
+    manager = SessionManager(config)
+    await manager.initialize()
+    session = await manager.create_session({"channel": "test"})
+
+    _ = await manager.prepare_messages_for_agent([{"role": "user", "content": "你好"}])
+    await manager.save_message(session.session_id, "user", "我更喜欢Python")
+
+    facts = await manager.list_memory_facts(scope="user")
+    assert any(f.fact_key == "preferred_tech" and f.fact_value == "Python" for f in facts)
+    user_text = manager.documents.user_path.read_text(encoding="utf-8")
+    assert "tech_stack:" in user_text
+    assert "Python" in user_text
+
     await manager.cleanup()
 
 
@@ -190,6 +216,37 @@ async def test_user_inline_onboarding_confirmation_writes_db_and_md(tmp_path):
     user_text = manager.documents.user_path.read_text(encoding="utf-8")
     assert "长期工程伙伴" in shiyi_text
     assert "我是腿哥，专注 Python 后端" in user_text
+
+    await manager.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_user_natural_onboarding_confirmation_writes_db_and_md(tmp_path):
+    """Natural-language onboarding confirmation should also persist DB and markdown."""
+    config = MemoryConfig(memory_root=str(tmp_path / "memory"))
+    manager = SessionManager(config)
+    await manager.initialize()
+    session = await manager.create_session({"channel": "test"})
+
+    # First prompt once (marks onboarding_prompted)
+    _ = await manager.prepare_messages_for_agent([{"role": "user", "content": "你好"}])
+
+    await manager.save_message(
+        session.session_id,
+        "user",
+        "十一，你的人设是我的赛博开发搭子。"
+        "我是腿哥，主要做 Python 后端和 Agent。"
+        "确认，就按这个来。",
+    )
+
+    state = await manager.get_global_user_state()
+    assert state["identity_confirmed"] is True
+    assert state["display_name"] == "腿哥"
+
+    shiyi_text = manager.documents.shiyi_path.read_text(encoding="utf-8")
+    user_text = manager.documents.user_path.read_text(encoding="utf-8")
+    assert "赛博开发搭子" in shiyi_text
+    assert "我是腿哥" in user_text
 
     await manager.cleanup()
 
@@ -314,7 +371,8 @@ async def test_confirmed_pending_fact_is_applied_to_user_memory(tmp_path):
     facts = await manager.list_memory_facts(scope="user")
     assert any(f.fact_key == "preferred_tech" and f.fact_value == "Python" for f in facts)
     user_text = manager.documents.user_path.read_text(encoding="utf-8")
-    assert "- preferred_tech: Python" in user_text
+    assert "tech_stack:" in user_text
+    assert "Python" in user_text
     events = await manager.list_memory_events()
     assert any(e.event_type == "memory_fact_applied" for e in events)
     assert any(e.event_type == "memory_pending_status_updated" for e in events)
@@ -340,7 +398,39 @@ async def test_user_message_auto_extracts_high_confidence_preference(tmp_path):
     facts = await manager.list_memory_facts(scope="user")
     assert any(f.fact_key == "preferred_tech" and f.fact_value == "Python" for f in facts)
     user_text = manager.documents.user_path.read_text(encoding="utf-8")
-    assert "- preferred_tech: Python" in user_text
+    assert "tech_stack:" in user_text
+    assert "Python" in user_text
+
+    await manager.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_apply_memory_fact_rejects_invalid_patch_key(tmp_path):
+    """Structured patch gate should reject invalid fact keys before persistence."""
+    config = MemoryConfig(memory_root=str(tmp_path / "memory"))
+    manager = SessionManager(config)
+    await manager.initialize()
+    await manager.complete_identity_onboarding(
+        shiyi_identity="你是十一。",
+        user_identity="我是腿哥。",
+        display_name="腿哥",
+    )
+
+    await manager._apply_memory_fact(
+        fact={
+            "scope": "user",
+            "fact_type": "preference",
+            "fact_key": "bad key with spaces",
+            "fact_value": "should_not_write",
+        },
+        confidence=0.95,
+        source_message_id="msg-invalid",
+    )
+
+    facts = await manager.list_memory_facts(scope="user")
+    assert not any(f.fact_key == "bad key with spaces" for f in facts)
+    events = await manager.list_memory_events(event_type="memory_patch_rejected")
+    assert any(e.payload.get("fact_key") == "bad key with spaces" for e in events)
 
     await manager.cleanup()
 

@@ -6,9 +6,29 @@ from datetime import datetime
 import re
 from pathlib import Path
 
+import yaml
+
 
 class MemoryDocumentStore:
     """Manage memory markdown documents under a configurable root directory."""
+
+    _USER_HARD_KEY_MAP = {
+        "display_name": "display_name",
+        "nickname": "display_name",
+        "role": "role",
+        "location": "location",
+        "habit": "work_style",
+        "work_style": "work_style",
+    }
+    _SHIYI_HARD_KEY_MAP = {
+        "name": "name",
+        "version": "version",
+        "persona": "persona",
+        "identity": "persona",
+        "tone": "tone",
+        "boundary": "boundaries",
+        "boundaries": "boundaries",
+    }
 
     def __init__(self, memory_root: str = "data/memory"):
         self.root = Path(memory_root)
@@ -62,16 +82,31 @@ class MemoryDocumentStore:
     def write_initial_identity(self, shiyi_identity: str, user_identity: str):
         """Persist first-run identity definitions for assistant and user."""
         self.ensure_initialized()
-        self._atomic_write(
-            self.shiyi_path,
-            "# ShiYi\n\n## 核心身份\n\n"
-            f"{shiyi_identity.strip()}\n",
+        now = datetime.now().isoformat(timespec="seconds")
+
+        shiyi_meta, _ = self._read_document(self.shiyi_path)
+        shiyi_meta.setdefault("name", "ShiYi")
+        shiyi_meta.setdefault("version", "2.0")
+        shiyi_meta["persona"] = shiyi_identity.strip()
+        shiyi_meta["updated_at"] = now
+        shiyi_body = (
+            "# ShiYi\n\n"
+            "## 核心指令\n\n"
+            f"- {shiyi_identity.strip()}\n"
         )
-        self._atomic_write(
-            self.user_path,
-            "# User\n\n## 用户画像\n\n"
-            f"{user_identity.strip()}\n",
+        self._write_document(self.shiyi_path, shiyi_meta, shiyi_body)
+
+        user_meta, _ = self._read_document(self.user_path)
+        user_meta["updated_at"] = now
+        display_name = self._extract_display_name(user_identity)
+        if display_name:
+            user_meta["display_name"] = display_name
+        user_body = (
+            "# User\n\n"
+            "## 用户画像\n\n"
+            f"- {user_identity.strip()}\n"
         )
+        self._write_document(self.user_path, user_meta, user_body)
 
     def build_system_memory_card(self, max_chars: int = 1400) -> str:
         """Build a compact system prompt memory card from markdown docs."""
@@ -93,29 +128,42 @@ class MemoryDocumentStore:
         )
 
     def upsert_user_fact(self, fact_key: str, fact_value: str):
-        """Upsert a user profile fact as a single bullet line."""
+        """Apply one structured patch to User.md with hard/soft field separation."""
         self.ensure_initialized()
         key = fact_key.strip()
         value = str(fact_value).strip()
-        target_line = f"- {key}: {value}"
+        if not key or not value:
+            return
 
-        lines = self.user_path.read_text(encoding="utf-8").splitlines()
-        for i, line in enumerate(lines):
-            if line.strip().startswith(f"- {key}:"):
-                lines[i] = target_line
-                self._atomic_write(self.user_path, "\n".join(lines).rstrip() + "\n")
-                return
+        meta, body = self._read_document(self.user_path)
+        applied_hard = self._apply_user_hard_field(meta, key, value)
+        if not applied_hard:
+            body = self._upsert_key_value_bullet(body, key, value)
 
-        if lines and lines[-1].strip():
-            lines.append("")
-        lines.append(target_line)
-        self._atomic_write(self.user_path, "\n".join(lines).rstrip() + "\n")
+        meta["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        self._write_document(self.user_path, meta, body)
+
+    def upsert_shiyi_fact(self, fact_key: str, fact_value: str):
+        """Apply one structured patch to ShiYi.md with hard/soft field separation."""
+        self.ensure_initialized()
+        key = fact_key.strip()
+        value = str(fact_value).strip()
+        if not key or not value:
+            return
+
+        meta, body = self._read_document(self.shiyi_path)
+        applied_hard = self._apply_shiyi_hard_field(meta, key, value)
+        if not applied_hard:
+            body = self._upsert_key_value_bullet(body, key, value)
+
+        meta["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        self._write_document(self.shiyi_path, meta, body)
 
     def append_project_update(self, update: str, max_lines: int = 100):
         """Append project update with rolling summary metabolism."""
         self.ensure_initialized()
-        text = self.project_path.read_text(encoding="utf-8")
-        bullet_lines = [line for line in text.splitlines() if line.startswith("- ")]
+        meta, body = self._read_document(self.project_path)
+        bullet_lines = [line for line in body.splitlines() if line.startswith("- ")]
         bullet_lines.append(f"- {update.strip()}")
 
         if len(bullet_lines) > max_lines:
@@ -128,13 +176,14 @@ class MemoryDocumentStore:
             bullet_lines = [summary, *keep_lines]
 
         content = "# Project\n\n## 当前阶段\n\n" + "\n".join(bullet_lines) + "\n"
-        self._atomic_write(self.project_path, content)
+        meta["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        self._write_document(self.project_path, meta, content)
 
     def add_insight(self, insight: str, hot_limit: int = 10):
         """Insert one insight and keep only top N hot entries."""
         self.ensure_initialized()
-        text = self.insights_path.read_text(encoding="utf-8")
-        current = [line[2:].strip() for line in text.splitlines() if line.startswith("- ")]
+        meta, body = self._read_document(self.insights_path)
+        current = [line[2:].strip() for line in body.splitlines() if line.startswith("- ")]
         candidate = insight.strip()
         if not candidate:
             return
@@ -143,13 +192,118 @@ class MemoryDocumentStore:
         hot_items = ordered[:hot_limit]
         lines = "\n".join(f"- {item}" for item in hot_items)
         content = "# Insights\n\n## 热点经验\n\n" + lines + "\n"
-        self._atomic_write(self.insights_path, content)
+        meta["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        self._write_document(self.insights_path, meta, content)
+
+    def _apply_user_hard_field(self, meta: dict, key: str, value: str) -> bool:
+        mapped = self._USER_HARD_KEY_MAP.get(key)
+        if mapped:
+            meta[mapped] = value
+            return True
+
+        if key in {"preferred_tech", "tech_stack"}:
+            current = meta.get("tech_stack", [])
+            if isinstance(current, str):
+                current_items = [item.strip() for item in re.split(r"[，,;/|]+", current) if item.strip()]
+            elif isinstance(current, list):
+                current_items = [str(item).strip() for item in current if str(item).strip()]
+            else:
+                current_items = []
+
+            incoming = [item.strip() for item in re.split(r"[，,;/|]+", value) if item.strip()]
+            if not incoming:
+                return True
+
+            merged = [*current_items]
+            for item in incoming:
+                if item not in merged:
+                    merged.append(item)
+            meta["tech_stack"] = merged
+            return True
+
+        return False
+
+    def _apply_shiyi_hard_field(self, meta: dict, key: str, value: str) -> bool:
+        mapped = self._SHIYI_HARD_KEY_MAP.get(key)
+        if not mapped:
+            return False
+
+        if mapped == "boundaries":
+            items = [item.strip() for item in re.split(r"[，,;/|]+", value) if item.strip()]
+            meta[mapped] = items
+            return True
+
+        meta[mapped] = value
+        return True
+
+    @staticmethod
+    def _upsert_key_value_bullet(body: str, key: str, value: str) -> str:
+        lines = body.splitlines()
+        if not lines:
+            lines = ["# User", "", "## 用户画像", ""]
+
+        lines = [line for line in lines if line.strip() != "- 待初始化"]
+        target_line = f"- {key}: {value}"
+        for index, line in enumerate(lines):
+            if line.strip().startswith(f"- {key}:"):
+                lines[index] = target_line
+                return "\n".join(lines).rstrip() + "\n"
+
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append(target_line)
+        return "\n".join(lines).rstrip() + "\n"
+
+    def _read_document(self, path: Path) -> tuple[dict, str]:
+        text = path.read_text(encoding="utf-8")
+        meta, body = self._split_frontmatter(text)
+        return meta, body
+
+    def _write_document(self, path: Path, meta: dict, body: str):
+        serialized_meta = yaml.safe_dump(meta or {}, allow_unicode=True, sort_keys=False).strip()
+        normalized_body = body.rstrip() + "\n"
+        content = f"---\n{serialized_meta}\n---\n{normalized_body}"
+        self._atomic_write(path, content)
+
+    @staticmethod
+    def _split_frontmatter(text: str) -> tuple[dict, str]:
+        normalized = text.replace("\r\n", "\n")
+        if not normalized.startswith("---\n"):
+            return {}, normalized
+
+        end_index = normalized.find("\n---\n", 4)
+        if end_index < 0:
+            return {}, normalized
+
+        raw_meta = normalized[4:end_index]
+        body = normalized[end_index + len("\n---\n") :]
+        try:
+            parsed = yaml.safe_load(raw_meta) or {}
+            if not isinstance(parsed, dict):
+                parsed = {}
+        except yaml.YAMLError:
+            parsed = {}
+        return parsed, body
+
+    @staticmethod
+    def _extract_display_name(identity_text: str) -> str | None:
+        match = re.search(r"我(?:叫|是)\s*([^\s，。！？,!.?]{1,20})", identity_text or "")
+        if not match:
+            return None
+        return match.group(1).strip()
 
     @staticmethod
     def _atomic_write(path: Path, content: str):
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         tmp_path.write_text(content, encoding="utf-8")
-        tmp_path.replace(path)
+        try:
+            tmp_path.replace(path)
+        except PermissionError:
+            # Windows can reject replace when the target is temporarily locked
+            # by another reader; fall back to direct write to preserve progress.
+            path.write_text(content, encoding="utf-8")
+            if tmp_path.exists():
+                tmp_path.unlink()
 
     @staticmethod
     def _ensure_file(path: Path, content: str):
@@ -167,8 +321,16 @@ class MemoryDocumentStore:
     @staticmethod
     def _default_shiyi() -> str:
         return (
+            "---\n"
+            "name: ShiYi\n"
+            "version: '2.0'\n"
+            "persona: ''\n"
+            "boundaries: []\n"
+            "tone: ''\n"
+            "updated_at: ''\n"
+            "---\n"
             "# ShiYi\n\n"
-            "## 核心身份\n\n"
+            "## 核心指令\n\n"
             "- 待初始化\n"
         )
 
@@ -184,6 +346,14 @@ class MemoryDocumentStore:
     @staticmethod
     def _default_user() -> str:
         return (
+            "---\n"
+            "display_name: ''\n"
+            "role: ''\n"
+            "tech_stack: []\n"
+            "location: ''\n"
+            "work_style: ''\n"
+            "updated_at: ''\n"
+            "---\n"
             "# User\n\n"
             "## 用户画像\n\n"
             "- 待初始化\n"
@@ -192,6 +362,9 @@ class MemoryDocumentStore:
     @staticmethod
     def _default_project() -> str:
         return (
+            "---\n"
+            "updated_at: ''\n"
+            "---\n"
             "# Project\n\n"
             "## 当前阶段\n\n"
             "- 暂无项目摘要\n"
@@ -200,6 +373,9 @@ class MemoryDocumentStore:
     @staticmethod
     def _default_insights() -> str:
         return (
+            "---\n"
+            "updated_at: ''\n"
+            "---\n"
             "# Insights\n\n"
             "## 热点经验\n\n"
             "- 暂无经验条目\n"
